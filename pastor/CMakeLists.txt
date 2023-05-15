@@ -44,8 +44,8 @@ include_directories("third_party/utils"
                     "third_party/tbb/include"
                     "third_party/parallel_hashmap"
                     "$ENV{INSTALL_DIR}/yaml-cpp/include"
-                    "/home/gsd/mbbm/dhts/opendht/include"
-                    "/usr/local/lib/python3.8/dist-packages/tensorflow/include/external/com_github_grpc_grpc/include/grpcpp"
+                    #"/home/gsd/mbbm/dhts/opendht/include"
+                    #"/usr/local/lib/python3.8/dist-packages/tensorflow/include/external/com_github_grpc_grpc/include/grpcpp"
                     )
 
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
@@ -54,9 +54,9 @@ find_library(TBB_LIBRARY
         NAMES libtbb.so
         PATHS third_party/tbb/lib)
 
-find_library(opendht_LIBRARY
-        NAMES libopendht.so
-        PATHS /home/gsd/mbbm/dhts/opendht/build)
+#find_library(opendht_LIBRARY
+#        NAMES libopendht.so
+#        PATHS /home/gsd/mbbm/dhts/opendht/build)
 
 find_package(absl REQUIRED
         PATHS $ENV{INSTALL_DIR})

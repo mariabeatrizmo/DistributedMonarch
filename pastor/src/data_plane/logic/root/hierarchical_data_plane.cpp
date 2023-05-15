@@ -67,10 +67,12 @@ HierarchicalDataPlane::HierarchicalDataPlane(int id, int ws, int nw, int hierarc
     }
     pclose(pipe);*/
     if(dht){
-        dht_node.run(4222);
+        /*dht_node.run(4222);
         // check if self is first node 
         if(self_ip != workers_ip[0])
             dht_node.bootstrap(workers_ip[0] + ":4222");
+        */
+       std::cout << "Está a correr com a dht..." << std::endl;
     }
     RunServer(this);
 }
@@ -119,18 +121,22 @@ HierarchicalDataPlane::HierarchicalDataPlane(HierarchicalDataPlane* hdp){
     }
     pclose(pipe);*/
     if(dht){
-        dht_node.run(4222);
+        /*dht_node.run(4222);
         // check if self is first node 
         if(self_ip != workers_ip[0])
-            dht_node.bootstrap(workers_ip[0] + ":4222");
+            dht_node.bootstrap(workers_ip[0] + ":4222");*/
+        std::cout << "Está a correr com a dht..." << std::endl;
     }
     RunServer(this);
 }
 
 HierarchicalDataPlane::~HierarchicalDataPlane(){
     delete profiling_service;
-    dht_node.shutdown();
-    dht_node.join();
+    if(dht){
+        /*dht_node.shutdown();
+        dht_node.join();*/
+        std::cout << "Terminou a dht..." << std::endl;
+    }
 }
 
 absl::string_view HierarchicalDataPlane::decode_filename(absl::string_view full_path){
@@ -399,7 +405,7 @@ ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t of
     if(storage_level == storage_hierarchical_matrix[matrix_index].size()-1){
         if(dht){
             const char* entry;
-
+            /*
             auto info_key = dht::InfoHash::get(fi->get_name());
             auto vals = dht_node.get(info_key).get();
             if(!vals.empty()){
@@ -414,6 +420,7 @@ ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t of
             else{
                 std::cout << "------------------------------- nao entrou : " << fi->get_name() <<std::endl;
             }
+            */
         }
         else{
             for(auto worker_saved_data : worker_files_map){

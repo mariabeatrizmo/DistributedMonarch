@@ -20,7 +20,7 @@
 #include "../metadata/file.h"
 #include "../../../helpers/logger.h"
 
-#include "/home/gsd/mbbm/dhts/opendht/include/opendht.h"
+//#include "/home/gsd/mbbm/dhts/opendht/include/opendht.h"
 
 
 #if defined BAZEL_BUILD || defined TF_BAZEL_BUILD
@@ -72,7 +72,7 @@ public:
     bool becomes_full;
     //If the application reads chunks from the same glob in parallel or sequentially.
     bool uses_large_seq_reads;
-    dht::DhtRunner dht_node;
+    //dht::DhtRunner dht_node;
     std::map<std::string, std::vector<std::string>> worker_files_map;
     std::string self_ip;
     std::vector<std::string> workers_ip;
