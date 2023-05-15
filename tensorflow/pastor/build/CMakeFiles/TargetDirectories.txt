@@ -1,4 +1,0 @@
-/home/gsd/mbbm/monarch/pastor/build/CMakeFiles/edit_cache.dir
-/home/gsd/mbbm/monarch/pastor/build/CMakeFiles/rebuild_cache.dir
-/home/gsd/mbbm/monarch/pastor/build/CMakeFiles/hw_grpc_proto.dir
-/home/gsd/mbbm/monarch/pastor/build/CMakeFiles/monarch.dir
