@@ -1,0 +1,2 @@
+# Hashes of file build rules.
+8e81f6bf102cab8c429363da8da27c67 ../grpc_out/controller_service.pb.cc
