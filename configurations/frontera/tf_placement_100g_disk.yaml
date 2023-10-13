@@ -14,9 +14,9 @@ data_plane:
       prefix: "/tmp/100g_tfrecords"
     - type: "file_system"
       block_size: "max"
-      prefix: "/scratch1/07854/dantas/shared/imagenet_processed/100g_tfrecords"
+      prefix: "/scratch1/09111/mbbm/100g_tfrecords"
 metadata_container:
   epochs: "3"
   shuffling: "true"
-home_dir: "/home1/07854/dantas/maypaper/middleware_output"
-debug: "false"
+home_dir: "/tmp/middleware_output"
+debug: "true"
