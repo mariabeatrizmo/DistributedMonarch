@@ -98,6 +98,8 @@ ssize_t FileSystemDriver::read_block(int fd, char* result, size_t n, uint64_t of
     ssize_t bytes_read = 0;
 
     while (n > 0 && error == 0) {
+    //if(n > 0 && error == 0) {
+        if(_64_option) std::cout << "n in while= " << n << std::endl << std::flush;
         // Some platforms, notably macs, throw EINVAL if pread is asked to read
         // more than fits in a 32-bit integer.
         size_t requested_read_length;
@@ -106,18 +108,24 @@ ssize_t FileSystemDriver::read_block(int fd, char* result, size_t n, uint64_t of
         } else {
             requested_read_length = n;
         }
+        //if(_64_option) std::cout << "requested_read_length in while= " << requested_read_length << std::endl << std::flush;
 
-        size_t r = 0;
+        ssize_t r = 0;
+        //int teste=0;
         if(transparent_api){
-            r = passthrough_lib_pread(fd, dst, requested_read_length, off, _64_option);
+               //teste=1;
+               r = passthrough_lib_pread(fd, dst, requested_read_length, off, _64_option);
         }else {
             if(_64_option){
-                r = pread64(fd, dst, requested_read_length, static_cast<off_t>(off));
+                //teste=2;
+                //r = pread64(fd, dst, requested_read_length, static_cast<off_t>(off));
+		r = pread(fd, dst, requested_read_length, static_cast<off_t>(off));
             }else {
+                //teste=3;
                 r = pread(fd, dst, requested_read_length, static_cast<off_t>(off));
             }
         }
-
+	//if(_64_option) std::cout << "n in while=" << n << "   r in while= " << r << "      offset= "<< off << "          teste= " << teste << std::endl << std::flush;
         if (r > 0) {
             dst += r;
             n -= r;
@@ -132,7 +140,12 @@ ssize_t FileSystemDriver::read_block(int fd, char* result, size_t n, uint64_t of
             std::cerr << "IOError (off:" << off << ", size:" << requested_read_length
                       << "): " << std::strerror(errno) << std::endl;
             error = 1;
+            //int err = errno;
+	    //fprintf(stderr, "%s\n", explain_errno_pread(err, fd, dst, requested_read_length, off));
         }
+
+        //if(_64_option) std::cout << "n in end of body of while= " << n << " ++++++++++++++++++++++++++ " << fcntl(fd, F_GETFD)  /*
+        //         << " ************** " << explain_pread(fd, dst, requested_read_length, off)*/ << std::endl << std::flush;
     }
 
     return bytes_read;
@@ -151,8 +164,11 @@ ssize_t FileSystemDriver::read(int fd, char* result, uint64_t offset, size_t n, 
 
     // Read file
     while(total_bytes_read < n) {
+    //if(total_bytes_read < n) {
+        //if(_64_option) std::cout << "total_bytes_read= " << total_bytes_read << std::endl << std::flush;
         // Read block
         bytes_read = read_block(fd, result + buffer_offset, usable_block_size, offset, _64_option);
+        //if(_64_option) std::cout << "bytes_read in while= " << bytes_read << std::endl << std::flush;
         total_bytes_read += bytes_read;
         offset += bytes_read;
         buffer_offset += bytes_read;
@@ -165,9 +181,12 @@ ssize_t FileSystemDriver::read(int fd, char* result, uint64_t offset, size_t n, 
 }
 
 Status<ssize_t> FileSystemDriver::read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option){
+    if(_64_option) std::cout << "entra FileSystemDriver::read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option) : " << fi->get_name() << std::endl << std::flush;
+
     int fd;
 
     if(!fi->has_shareable_file_descriptors()) {
+        //if(_64_option) std::cout << "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP entra if(!fi->has_shareable_file_descriptors())" << std::endl << std::flush;
         // Open file
         if(transparent_api){
             fd = passthrough_lib_open(get_full_path(fi->get_name()).c_str(), O_RDONLY, false);
@@ -175,14 +194,15 @@ Status<ssize_t> FileSystemDriver::read(FileInfo* fi, char* result, uint64_t offs
             fd = open(get_full_path(fi->get_name()).c_str(), O_RDONLY);
         }
     }else{
+        //if(_64_option) std::cout << "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP entra else) : " << fcntl(fi->get_file_descriptor(level), F_GETFD) << std::endl << std::flush;
         //open_descriptor needs to be executed by the caller. No need for locking since open has been signaled already
         fd = fi->get_file_descriptor(level);
     }
     if(fd < 0)
         return {NOT_FOUND};
-
+    if(_64_option) std::cout << "FD= " << fd << std::endl << std::flush;
     ssize_t bytes_read = read(fd, result, offset, n, _64_option);
-
+    if(_64_option) std::cout << "bytes_read= " << bytes_read << std::endl << std::flush;
     if(!fi->has_shareable_file_descriptors()) {
         if(transparent_api){
             passthrough_lib_close(fd);
@@ -191,6 +211,7 @@ Status<ssize_t> FileSystemDriver::read(FileInfo* fi, char* result, uint64_t offs
         }
     }
     // Validate result
+    if(_64_option) std::cout << "acaba FileSystemDriver::read - " << fi->get_name() << std::endl << std::flush;
     return {bytes_read};
 }
 
@@ -225,7 +246,7 @@ int FileSystemDriver::open_descriptor(FileInfo* fi, int flags, bool _64_option, 
     int n_readers = client_open ? std::get<1>(di)++ + std::get<2>(di) : std::get<1>(di) + std::get<2>(di)++;
     if(n_readers == 0) {
         if (transparent_api) {
-            std::get<0>(di) = passthrough_lib_open(get_full_path(fi->get_name()).c_str(), flags, _64_option);
+            std::get<0>(di) = passthrough_lib_open(get_full_path(fi->get_name()).c_str(), O_RDONLY, _64_option); //flags, _64_option);
         } else {
             std::get<0>(di) = open(get_full_path(fi->get_name()).c_str(), flags);
         }

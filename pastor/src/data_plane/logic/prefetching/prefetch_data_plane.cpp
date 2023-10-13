@@ -42,6 +42,7 @@ void PrefetchDataPlane::start_prefetching_solo_placement(){
                                 std::to_string(sfi->get_storage_level()));
                     auto* f = new PrefetchedFile(sfi, i);
                     HierarchicalDataPlane::read_from_storage(false, f, sfi->get_storage_level());
+                    std::cout << "void PrefetchDataPlane::start_prefetching_solo_placement() - control_handler->place(f);" << std::endl << std::flush;
                     control_handler->place(f);
                 }
                 HierarchicalDataPlane::apply_job_termination();
@@ -76,6 +77,7 @@ void PrefetchDataPlane::start_prefetching_with_eviction(){
                 debug_write("Prefetching id: " + std::to_string(i) + ", name: " + sfi->get_name() + " from level " + std::to_string(sfi->get_storage_level()));
                 HierarchicalDataPlane::read_from_storage(false, f, sfi->get_storage_level());
             }
+            std::cout << "void PrefetchDataPlane::start_prefetching_with_eviction() - control_handler->place(f);" << std::endl << std::flush;
             control_handler->place(f);
         });
     }

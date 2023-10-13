@@ -7,6 +7,7 @@
 
 #define _GNU_SOURCE 1
 
+#include <atomic>
 #include <mutex>
 #include <dlfcn.h>
 #include "../../logic/data_plane.h"
@@ -27,14 +28,18 @@ private:
     DataPlane* data_plane{nullptr};
     std::string m_lib_name { "libc.so.6" };
     void* m_lib_handle { nullptr };
-    bool init_done = false;
+    std::atomic<bool> init_done = ATOMIC_VAR_INIT(false);
 
 public:
     TMonarch(){
         data_plane = ConfigurationParser::parse(std::getenv(CONFIGS_PATH));
+        printf("TMonarch() ConfigurationParser::parse(std::getenv(CONFIGS_PATH));\n");
         data_plane->init(true);
+        printf("TMonarch init\n");
         data_plane->start();
+        printf("TMonarch() start()");
         init_done = true;
+        printf("End  TMonarch()\n");
     }
 
     ~TMonarch(){

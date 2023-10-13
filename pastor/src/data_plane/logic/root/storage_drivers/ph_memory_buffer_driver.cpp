@@ -5,7 +5,9 @@
 #include "ph_memory_buffer_driver.h"
 
 Status<ssize_t> PHMemoryBufferDriver::read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option){
+    //std::cout << "pré file = buffer ..." << std::endl << std::flush;
     File* fc = buffer[fi->get_name()];
+    //std::cout << "pré memcopy" << std::endl << std::flush;
     memcpy(result, fc->get_content() + offset, n);
     return {static_cast<ssize_t>(n)};
 }

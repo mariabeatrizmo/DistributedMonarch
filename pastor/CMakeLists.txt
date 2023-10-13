@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.17.5)
 project(thesis VERSION 1.0.0 DESCRIPTION "monarch: ...")
-include(CMakePrintHelpers)
 
-#       
+#https://stackoverflow.com/questions/17511496/how-to-create-a-shared-library-with-cmake/45843676#45843676
 #https://cgold.readthedocs.io/en/latest/tutorials/libraries/static-shared.html
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
 SET(CMAKE_CXX_STANDARD_REQUIRED ON)
 SET(CMAKE_CXX_EXTENSIONS OFF)
 SET(CMAKE_CXX_FLAGS -pthread)
@@ -21,7 +20,7 @@ endif (APPLE)
 
 if (UNIX AND NOT APPLE)
     message(STATUS "Detecting UNIX (!Apple)")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wl,--no-as-needed -ldl")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wl,--no-as-needed -ldl -lboost_system -lboost_thread")
 endif ()
 
 if (HAVE_CLANG_THREAD_SAFETY)
@@ -33,8 +32,7 @@ option(MONARCH_INSTALL "Install monarch" OFF)
 option(TRANSPARENT_MONARCH "Build monarch transparent version" ON)
 option(BUILD_CONTROLLER_EXECUTABLE "Includes the Controller executable on build" OFF)
 option(BUILD_LOCAL_TEST "Build Monarch test" OFF)
-#option(USE_GRPC_SERVER "Build Monarch with GRPC server enabled" OFF)
-option(USE_GRPC_SERVER "Build Monarch with GRPC server enabled" ON)
+option(USE_GRPC_SERVER "Build Monarch with GRPC server enabled" OFF)
 
 find_package(Threads REQUIRED)
 
@@ -43,20 +41,13 @@ include_directories("third_party/utils"
                     "third_party/ctpl"
                     "third_party/tbb/include"
                     "third_party/parallel_hashmap"
-                    "$ENV{INSTALL_DIR}/yaml-cpp/include"
-                    #"/home/gsd/mbbm/dhts/opendht/include"
-                    #"/usr/local/lib/python3.8/dist-packages/tensorflow/include/external/com_github_grpc_grpc/include/grpcpp"
-                    )
+                    "$ENV{INSTALL_DIR}/yaml-cpp/include")
 
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 
 find_library(TBB_LIBRARY
         NAMES libtbb.so
         PATHS third_party/tbb/lib)
-
-#find_library(opendht_LIBRARY
-#        NAMES libopendht.so
-#        PATHS /home/gsd/mbbm/dhts/opendht/build)
 
 find_package(absl REQUIRED
         PATHS $ENV{INSTALL_DIR})
@@ -105,77 +96,100 @@ target_link_libraries(monarch
         absl::hash_function_defaults
         absl::raw_hash_map
         absl::algorithm_container
-        absl::memory)
+        absl::memory
+        )
 
- 
+
+
+
+
+
+
+
+
 if(USE_GRPC_SERVER)
-    #cmake_print_variables(${MONARCH_SRC_FILES})
     add_compile_definitions(INCLUDE_GRPC_DHT)
-    set(protobuf_MODULE_COMPATIBLE TRUE)
-    find_package(Protobuf CONFIG REQUIRED)
-    message(STATUS "Using protobuf ${Protobuf_VERSION}")
+    message(STATUS "Using gRPC via add_subdirectory (FetchContent).")
+    include(FetchContent)
+    FetchContent_Declare(
+        grpc
+        GIT_REPOSITORY https://github.com/grpc/grpc.git
+        # when using gRPC, you will actually set this to an existing tag, such as
+        # v1.25.0, v1.26.0 etc..
+        # For the purpose of testing, we override the tag used to the commit
+        # that's currently under test.
+        #GIT_TAG        v1.26.0)
+        GIT_TAG        v1.37.0)
+        #GIT_TAG        v1.54.0)
+    FetchContent_MakeAvailable(grpc)
 
-    set(_PROTOBUF_LIBPROTOBUF protobuf::libprotobuf)
-    set(_REFLECTION gRPC::grpc++_reflection)
-    if(CMAKE_CROSSCOMPILING)
-        find_program(_PROTOBUF_PROTOC protoc)
-    else()
-        set(_PROTOBUF_PROTOC $<TARGET_FILE:protobuf::protoc>)
-    endif()
-    # Find gRPC installation
-    # Looks for gRPCConfig.cmake file installed by gRPC's cmake installation.
-    find_package(gRPC CONFIG REQUIRED)
-    message(STATUS "Using gRPC ${gRPC_VERSION}")
-
-    set(_GRPC_GRPCPP gRPC::grpc++)
+    # Since FetchContent uses add_subdirectory under the hood, we can use
+    # the grpc targets directly from this build.
+    set(_PROTOBUF_LIBPROTOBUF libprotobuf)
+    set(_REFLECTION grpc++_reflection)
+    set(_PROTOBUF_PROTOC $<TARGET_FILE:protoc>)
+    set(_GRPC_GRPCPP grpc++)
     if(CMAKE_CROSSCOMPILING)
         find_program(_GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
     else()
-        set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+        set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:grpc_cpp_plugin>)
     endif()
+    message(STATUS "Using gRPC ${gRPC_VERSION}")
+
+# ---------------------------------------------------------------------------- #
 
     # Proto file
-    get_filename_component(cs_proto "protos/info_exchange_service.proto" ABSOLUTE)
-    get_filename_component(cs_proto_path "${cs_proto}" PATH)
+    get_filename_component(hw_proto "protos/info_exchange_service.proto" ABSOLUTE)
+    get_filename_component(hw_proto_path "${hw_proto}" PATH)
+    #message(STATUS "hw_proto ${hw_proto}")
+    #message(STATUS "hw_proto_path ${hw_proto_path}")
+    message(STATUS "DIR: ${CMAKE_CURRENT_BINARY_DIR}")
 
     # Generated sources
-    set(grpc_files_home ${CMAKE_CURRENT_SOURCE_DIR}/grpc_out)
-    file(MAKE_DIRECTORY ${grpc_files_home})
-    cmake_print_variables(${grpc_files_home})
-    set(cs_proto_srcs "${grpc_files_home}/info_exchange_service.pb.cc")
-    set(cs_proto_hdrs "${grpc_files_home}/info_exchange_service.pb.h")
-    set(cs_grpc_srcs  "${grpc_files_home}/info_exchange_service.grpc.pb.cc")
-    set(cs_grpc_hdrs  "${grpc_files_home}/info_exchange_service.grpc.pb.h")
+    set(hw_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/info_exchange_service.pb.cc")
+    set(hw_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/info_exchange_service.pb.h")
+    set(hw_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/info_exchange_service.grpc.pb.cc")
+    set(hw_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/info_exchange_service.grpc.pb.h")
     add_custom_command(
-            OUTPUT "${cs_proto_srcs}" "${cs_proto_hdrs}" "${cs_grpc_srcs}" "${cs_grpc_hdrs}"
-            COMMAND ${_PROTOBUF_PROTOC}
-            ARGS --grpc_out "${CMAKE_CURRENT_SOURCE_DIR}/grpc_out"
-            --cpp_out "${CMAKE_CURRENT_SOURCE_DIR}/grpc_out"
-            -I  "${cs_proto_path}"
-            --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
-            "${cs_proto}"
-            DEPENDS "${cs_proto}")
+        OUTPUT "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
+        COMMAND ${_PROTOBUF_PROTOC}
+        ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
+        --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+        -I "${hw_proto_path}"
+        --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+        "${hw_proto}"
+        DEPENDS "${hw_proto}")
 
     # Include generated *.pb.h files
-    include_directories("${grpc_files_home}")
+    include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 
+    # hw_grpc_proto
     add_library(hw_grpc_proto
-            ${cs_proto_srcs}
-            ${cs_proto_hdrs}
-            ${cs_grpc_srcs}
-            ${cs_grpc_hdrs})
+        ${hw_grpc_srcs}
+        ${hw_grpc_hdrs}
+        ${hw_proto_srcs}
+        ${hw_proto_hdrs})
 
     target_link_libraries(hw_grpc_proto
-            ${_REFLECTION}
-            ${_GRPC_GRPCPP}
-            ${_PROTOBUF_LIBPROTOBUF})
+        ${_REFLECTION}
+        ${_GRPC_GRPCPP}
+        ${_PROTOBUF_LIBPROTOBUF})
 
     target_link_libraries(monarch
-            hw_grpc_proto
-            ${_REFLECTION}
-            ${_GRPC_GRPCPP}
-            ${_PROTOBUF_LIBPROTOBUF})
+        hw_grpc_proto
+        ${_REFLECTION}
+        ${_GRPC_GRPCPP}
+        ${_PROTOBUF_LIBPROTOBUF})
 endif(USE_GRPC_SERVER)
+
+
+
+
+
+
+
+
+
 
 
 if (BUILD_CONTROLLER_EXECUTABLE)

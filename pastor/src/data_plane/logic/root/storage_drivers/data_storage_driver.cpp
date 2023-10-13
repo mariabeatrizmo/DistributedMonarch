@@ -92,7 +92,10 @@ Status<ssize_t> AllocableDataStorageDriver::read(File* f){
 }
 
 Status<ssize_t> AllocableDataStorageDriver::read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option){
-    return base_storage_driver->read(fi, result, offset, n, _64_option);
+    //std::cout << "AllocableDataStorageDriver::read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option)" << std::endl << std::flush;
+    auto ret = base_storage_driver->read(fi, result, offset, n, _64_option);
+    //std::cout << "acaba AllocableDataStorageDriver::read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option)" << std::endl << std::flush;
+    return ret;
 }
 
 Status<ssize_t> AllocableDataStorageDriver::write(File* f){

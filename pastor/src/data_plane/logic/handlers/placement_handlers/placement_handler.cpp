@@ -3,16 +3,14 @@
 //
 
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include "placement_handler.h"
 
 #include "../../root/hierarchical_data_plane.h"
 #include "../../metadata/prefetched_file.h"
-
-#if defined(INCLUDE_GRPC_DHT)
-#include "../../root/client.cpp"
-#include "../../root/server.h"
-#endif
 
 PlacementHandler::PlacementHandler(HierarchicalDataPlane* data_plane, PlacementPolicy placement_policy, bool async_placement)
     : data_plane_(data_plane), placement_policy_(placement_policy), async_placement_(async_placement){}
@@ -68,16 +66,47 @@ Status<ssize_t> PlacementHandler::target_placement_logic(File* f, int target_lev
     if (status.state == SUCCESS) {
         if(data_plane_->debug_logger->is_activated()){
             data_plane_->debug_write(fi->get_name() + " placed on level: " + std::to_string(target_level));
-
-            if(data_plane_->dht){
-                (data_plane_->dht_node).put(fi->get_name(), data_plane_->self_ip + ":2510",{}, dht::time_point::max(),true);
-            }else{
-                for (std::string worker_ip : data_plane_->workers_ip){
-                    Client client(worker_ip+":2510");
-                    client.Announce(fi->get_name(), data_plane_->self_ip + ":2510");
-                }
-            }
         }
+        //if(fi->get_storage_level() != data_plane_->storage_hierarchical_matrix[data_plane_->matrix_index].size()-1){
+        /*if(data_plane_->dht){
+            (data_plane_->dht_node).put(fi->get_name(), data_plane_->self_ip + ":2510",{}, dht::time_point::max(),true);
+        }else if(data_plane_->grpc){
+            for (std::string worker_ip : data_plane_->workers_ip){
+                Client client(worker_ip+":2510");
+                client.Announce(fi->get_name(), data_plane_->self_ip + ":2510");
+            }
+        }else{*/
+	
+            for (std::string worker_ip : data_plane_->workers_ip){
+                int client = socket(AF_INET, SOCK_STREAM, 0);
+                if (client < 0){
+                    std::cout << "Error creating socket" << std::endl;
+                    exit(1);
+                }
+                int port_server = 50051;
+                struct sockaddr_in server_addr;
+                server_addr.sin_family = AF_INET;
+                server_addr.sin_addr.s_addr = inet_addr(worker_ip.c_str());
+                server_addr.sin_port = htons(port_server);
+                
+
+                if (connect(client, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0) {
+                    int size=strlen(fi->get_name().c_str());
+                    uint32_t network_msg_size = htonl(size);
+                    send(client, (const char*)&network_msg_size, sizeof(uint32_t), 0);
+                    send(client, fi->get_name().c_str(), size, 0);
+
+                    size=strlen(data_plane_->self_ip.c_str());
+                    network_msg_size = htonl(size);
+                    send(client, (const char*)&network_msg_size, sizeof(uint32_t), 0);
+                    send(client, data_plane_->self_ip.c_str(), size, 0);
+		    //std::cout << "Sender " << data_plane_->self_ip << " anuncia que tem o ficheiro" << fi->get_name() << "." << std::endl << std::flush;
+                }
+                close(client);
+            }
+        //}
+        //}
+
         fi->loaded_to(target_level);
     }else{
         if(data_plane_->debug_logger->is_activated()){

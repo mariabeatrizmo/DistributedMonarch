@@ -8,23 +8,13 @@
 #include <string>
 #include <vector>
 #include <iostream>
-#include <boost/functional/hash.hpp>
+#include <mutex>
 
 #include "absl/container/flat_hash_map.h"
 #include "file_info.h"
-#if defined BAZEL_BUILD || defined TF_BAZEL_BUILD
-#include "third_party/tbb/include/concurrent_hash_map.h"
-#else
-#include "concurrent_hash_map.h"
-#endif
+
 //TODO make it templated
 
-struct HashCompare {
-    static size_t hash( const int& key )                  { return boost::hash_value(key); }
-    static bool   equal( const int& key1, const int& key2 ) { return ( key1 == key2 ); }
-};
-
-typedef tbb::concurrent_hash_map<int, FileInfo*, HashCompare> concurrent_map_tbb;
 
 template<class T>
 class MetadataContainerService {
@@ -33,8 +23,12 @@ class MetadataContainerService {
     absl::flat_hash_map<std::string, int> target_class_to_id;
     absl::flat_hash_map<std::string, T*> name_to_info;
     absl::flat_hash_map<int, T*> id_to_info;
+
+
     //TODO possibly not the best concurrent map
-    concurrent_map_tbb file_descriptors_to_info;
+    std::mutex test_mutex;
+    absl::flat_hash_map<int, T*> file_descriptors_to_info;
+
     std::vector<std::tuple<std::string, int>> dirs_file_count;
     int world_size;
     int file_count;

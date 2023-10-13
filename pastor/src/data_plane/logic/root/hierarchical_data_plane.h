@@ -19,10 +19,6 @@
 #include "../metadata/metadata_container_service.h"
 #include "../metadata/file.h"
 #include "../../../helpers/logger.h"
-
-//#include "/home/gsd/mbbm/dhts/opendht/include/opendht.h"
-
-
 #if defined BAZEL_BUILD || defined TF_BAZEL_BUILD
 #include "third_party/ctpl/ctpl.h"
 #else
@@ -36,12 +32,12 @@ class ControlHandler;
 class HierarchicalDataPlane : public DataPlane{
     int neighbours_index;
     int storage_sync_timeout;
-    int matrix_index;
+    //int matrix_index;
     std::string type;
     bool shared_thread_pool;
     int total_used_threads;
     std::vector<ctpl::thread_pool*> storage_hierarchy_thread_pools;
-    std::vector<std::vector<DataStorageDriver*>> storage_hierarchical_matrix;
+    //std::vector<std::vector<DataStorageDriver*>> storage_hierarchical_matrix;
     ClientWatchRateLimiter* rate_limiter;
 
     //for transparent
@@ -50,6 +46,7 @@ class HierarchicalDataPlane : public DataPlane{
     ProfilingService* profiling_service;
     uint64_t epoch_size_signal;
     std::mutex epoch_change_mutex;
+    std::atomic<bool> is_training = ATOMIC_VAR_INIT(false);
 
 protected:
     // TODO for prefetching. If application_id not defined use instance_id.
@@ -59,7 +56,7 @@ protected:
     int worker_id;
     int num_workers;
     bool transparent_api;
-    MetadataContainerService<FileInfo>* metadata_container;
+    // MetadataContainerService<FileInfo>* metadata_container;
     ctpl::thread_pool* synchronization_thread_pool;
     ControlHandler* control_handler;
 
@@ -72,11 +69,19 @@ public:
     bool becomes_full;
     //If the application reads chunks from the same glob in parallel or sequentially.
     bool uses_large_seq_reads;
-    //dht::DhtRunner dht_node;
+
+    // dht::DhtRunner dht_node;
     std::map<std::string, std::vector<std::string>> worker_files_map;
     std::string self_ip;
     std::vector<std::string> workers_ip;
     bool dht = false;
+    bool grpc = false;
+    //std::map<std::string, std::pair<std::atomic<int>, char*>> files_caching;
+    std::map<std::string, std::pair<std::atomic<int>, char*>> files_caching;
+
+    MetadataContainerService<FileInfo>* metadata_container;
+    std::vector<std::vector<DataStorageDriver*>> storage_hierarchical_matrix;
+    int matrix_index;
 
 private:
     explicit HierarchicalDataPlane(int instance_id, int world_size, int number_of_workers, int hierarchy_size);
@@ -169,8 +174,13 @@ public:
 
 
     virtual void debug_write(const std::string& msg);
-
-    ssize_t base_read_origin(const std::string& filename, char* result, uint64_t offset, size_t n);
+    void exchager();
+    void updater();
+    //void teste();
+    ssize_t send_exchange_request(std::string worker, FileInfo* fi, char* result, uint64_t offset, size_t requested_size);
+    void sender(int client, std::string file, int offset, int size);
+    void update(std::string worker, std::string file);
+    void mem_prefetcher(std::string worker, char* result, FileInfo* fi, ssize_t requested_size);
 };
 
 #endif // BASIC_CONTROLLER_H

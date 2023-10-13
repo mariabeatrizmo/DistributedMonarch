@@ -41,9 +41,12 @@ public:
         // Open log file
         if (!path.empty()) {
             if(log_name.empty()){
+                //log_path = path + "/run-" + std::to_string(unique_id) + "-" + std::to_string(timestamp) + ".log";
                 char hostname[64];
                 gethostname(hostname, 64);
                 log_path = path + "/run-" + std::to_string(unique_id) + "-" + std::string(hostname) + "-" + std::to_string(timestamp) + ".log";
+                std::replace(log_path.begin(), log_path.end(), ' ', '_');
+                log_path.erase(std::remove(log_path.begin(), log_path.end(), '\n'), log_path.cend());
             }
             else{
                 log_path = path + "/" + log_name;

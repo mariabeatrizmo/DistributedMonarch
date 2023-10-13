@@ -1,5 +1,5 @@
 
-#include <grpc/grpc.h>
+/*#include <grpc/grpc.h>
 #include <grpc++/grpc++.h>
 #include <grpcpp/grpcpp.h>
 //#include "../../../../grpc_out/info_exchange_service.grpc.pb.h"
@@ -80,3 +80,4 @@ class Client{
             }
         }
 };
+*/

@@ -49,14 +49,12 @@ T* MetadataContainerService<T>::get_metadata(int id){
 
 template <class T>
 T* MetadataContainerService<T>::get_metadata_from_fildes(int fildes){
-    concurrent_map_tbb::const_accessor a;
-    if(!file_descriptors_to_info.find(a, fildes)){
+    const std::lock_guard<std::mutex> lock(test_mutex);
+    auto it = file_descriptors_to_info.find(fildes);
+    if (it == file_descriptors_to_info.end()){
         return nullptr;
     }else{
-        FileInfo* fi = a->second;
-        // Release lock for this filename
-        a.release();
-        return fi;
+        return it->second;
     }
 }
 
@@ -68,30 +66,20 @@ T* MetadataContainerService<T>::get_metadata_from_ordered_id(int rank, int id){
 
 template <class T>
 void MetadataContainerService<T>::store_fildes(int fildes, T* info){
-    concurrent_map_tbb::accessor a;
-    bool new_file = file_descriptors_to_info.insert(a, fildes);
-
-    if (!new_file) {
-        // Release lock for this filename
-        a.release();
-    } else {
-        // Add file with no content to buffer
-        a->second = info;
-
-        // Release lock for this filename
-        a.release();
+    const std::lock_guard<std::mutex> lock(test_mutex);
+    if (file_descriptors_to_info.find(fildes) == file_descriptors_to_info.end()){
+        file_descriptors_to_info.insert(std::make_pair(fildes, info));
     }
 }
 
 template <class T>
 T* MetadataContainerService<T>::remove_fildes(int fildes){
-    concurrent_map_tbb::const_accessor a;
-    bool file_in_buffer = file_descriptors_to_info.find(a, fildes);
-    if(file_in_buffer) {
-        T* f = a->second;
-        a.release();
-        file_descriptors_to_info.erase(fildes);
-        return f;
+    const std::lock_guard<std::mutex> lock(test_mutex);
+    auto it = file_descriptors_to_info.find(fildes);
+    if (it != file_descriptors_to_info.end()){
+        T* res = it->second;
+        file_descriptors_to_info.erase(it);
+        return res;
     }else{
         return nullptr;
     }
@@ -409,3 +397,4 @@ void MetadataContainerService<T>::init(){
 
 
 template class MetadataContainerService<FileInfo>;
+

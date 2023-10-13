@@ -1,7 +1,7 @@
 //
 // Created by dantas on 19/10/20.
 //
-
+//#include <libexplain/open.h>
 #include <iostream>
 #include <sstream>
 #include <cstring>
@@ -9,18 +9,31 @@
 #include <cstdlib>
 #include <chrono>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <mutex>
+//#include <shared_mutex>
+#include <boost/thread/locks.hpp>
+#include <boost/thread/shared_mutex.hpp>
 
 #include "absl/strings/strip.h"
 #include "hierarchical_data_plane.h"
 #include "hierarchical_data_plane_builder.h"
 #include "../handlers/control_handler.h"
 
-#if defined(INCLUDE_GRPC_DHT)
+/*#if defined(INCLUDE_GRPC_DHT)
 #include "client.cpp"
-#include "server.h"
-#endif
+#include "server.hpp"
+#endif*/
 
 #define MAX_MEM_COPY 1024 * 1024 * 8 //1MB
+//std::mutex emplace_mutex;
+//std::mutex access_mutex;
+//std::shared_mutex erase_mutex;
+boost::shared_mutex erase_mutex;
+std::mutex map_mutex;
+//std::map<std::string, std::mutex*> erase_mutex_map;
 
 HierarchicalDataPlaneBuilder* HierarchicalDataPlane::create(int instance_id_, int world_size_, int number_of_workers, int hierarchy_size){
     return new HierarchicalDataPlaneBuilder{instance_id_, world_size_, number_of_workers, hierarchy_size};
@@ -48,36 +61,305 @@ HierarchicalDataPlane::HierarchicalDataPlane(int id, int ws, int nw, int hierarc
     transparent_api = false;
     uses_large_seq_reads = true;
     epoch_size_signal = 0;
+    std::cout << "HP" << std::endl << std::flush;
 
-
-    self_ip = system("python3 $INSTALL_DIR/monarch/pastor/src/data_plane/logic/root/ip_finder.py");
-    
     workers_ip = std::vector<std::string>();
     char * val = std::getenv( "WRKS_ADDRS" );
-    char * p = strtok(val, ","); 
+    std::cout << "WRKS_ADDRS: " << val << std::endl;
+
+    char * p = strtok(val, ",");
     while (p != NULL) {
         workers_ip.push_back(std::string(p));
         p = strtok(NULL, ",");
     }
 
-    /*char buffer[128];
-    FILE* pipe = popen("python3 ~/mbbm/TensorflowScripts/scripts/ip_finder.py", "r");
-    while (fgets(buffer, sizeof buffer, pipe) != NULL) {
-        self_ip += buffer;
+    self_ip = workers_ip[atoi(std::getenv( "TASK_ID" ))/*-2*/];
+    std::cout << "self_ip: " << self_ip << std::endl;
+
+    worker_files_map = std::map<std::string, std::vector<std::string>>();
+    for(auto worker : workers_ip)
+        worker_files_map.insert({worker, std::vector<std::string>()});
+
+    //aux::RunServer(this);    
+
+    if(!dht && ! grpc){
+        std::thread updater(&HierarchicalDataPlane::updater, this);
+        updater.detach();
+        std::thread exchager(&HierarchicalDataPlane::exchager, this);
+        exchager.detach();
+        //std::thread teste(&HierarchicalDataPlane::exchager, this);
+        //teste.detach();
     }
-    pclose(pipe);*/
-    if(dht){
-        /*dht_node.run(4222);
-        // check if self is first node 
-        if(self_ip != workers_ip[0])
-            dht_node.bootstrap(workers_ip[0] + ":4222");
-        */
-       std::cout << "Está a correr com a dht..." << std::endl;
-    }
-    RunServer(this);
+    std::cout << "Termina criação do HP" << std::endl << std::flush;
 }
 
+
+
+/*void HierarchicalDataPlane::teste(){
+    for (std::string worker_ip : workers_ip){
+        int client = socket(AF_INET, SOCK_STREAM, 0);
+        if (client < 0){
+            std::cout << "Error creating socket" << std::endl;
+            exit(1);
+        }
+        int port_server = 50051;
+        struct sockaddr_in server_addr;
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_addr.s_addr = inet_addr(worker_ip.c_str());
+        server_addr.sin_port = htons(port_server);
+        
+
+        if (connect(client, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0) {
+            std::string fi = "train-00001-01024";
+            int size=strlen(fi.c_str());
+            uint32_t network_msg_size = htonl(size);
+            send(client, (const char*)&network_msg_size, sizeof(uint32_t), 0);
+            send(client, fi.c_str(), size, 0);
+
+            size=strlen(self_ip.c_str());
+            network_msg_size = htonl(size);
+            send(client, (const char*)&network_msg_size, sizeof(uint32_t), 0);
+            send(client, self_ip.c_str(), size, 0);
+            std::cout << "Sender " << self_ip << " anuncia que tem o ficheiro" << fi << "." << std::endl << std::flush;
+        
+        close(client);
+        }
+    }
+}*/
+
+
+
+
+void HierarchicalDataPlane::updater(){
+    int num_workers = workers_ip.size();
+    int server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    if (server_socket == -1){
+        std::cout << "Failed to create socket descriptor. " << strerror(errno) << "\n";
+        return ;}
+
+    int port_server = 50051;
+    struct sockaddr_in client_address;
+    int csize = sizeof(client_address);
+    struct sockaddr_in address;
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = inet_addr(self_ip.c_str());
+    address.sin_port = htons(port_server);
+
+    if (bind(server_socket, (struct sockaddr *)&address, sizeof(address)) < 0){
+        std::cout << "Failed to bind socket! " << strerror(errno) << "\n";
+        return ;}
+    
+    if (listen(server_socket, num_workers) < 0) { 
+        std::cout << "Failed to listen on socket! " << strerror(errno) << "\n";
+        exit(EXIT_FAILURE);
+    }
+    while(1) {
+        int client = accept(server_socket, (struct sockaddr*) &client_address, (socklen_t*) &csize);
+
+	{
+        std::unique_lock<std::mutex> lock(map_mutex);
+        uint32_t ntw_size;
+        int received_size = recv(client, &ntw_size, sizeof(uint32_t), 0);
+        int sz = ntohl(ntw_size);
+        char fl[sz];
+        received_size = recv(client, fl, sz, 0);
+        std::string file (fl);
+        file = file.substr(0, received_size);
+
+        received_size = recv(client, &ntw_size, sizeof(uint32_t), 0);
+        sz = ntohl(ntw_size);
+        char wrkr[sz];
+        received_size = recv(client, wrkr, sz, 0);
+        std::string worker (wrkr);
+        worker = worker.substr(0, received_size);
+
+        //std::thread upd(&HierarchicalDataPlane::update, this, worker, file);
+        //upd.detach();
+                
+        if (worker_files_map.find(worker) == worker_files_map.end())
+            worker_files_map.insert({worker, std::vector<std::string>()});
+
+        worker_files_map[worker].push_back(file);
+	}
+
+	
+        //std::cout << "Worker " << self_ip << " knows that " << worker << " has " << file << " saved." << std::endl << std::flush;
+
+        close(client);
+    }
+}
+
+
+void HierarchicalDataPlane::update(std::string worker, std::string file){
+    if (worker_files_map.find(worker) == worker_files_map.end())
+        worker_files_map.insert({worker, std::vector<std::string>()});
+          
+    worker_files_map[worker].push_back(file);
+}
+
+
+
+void HierarchicalDataPlane::exchager(){
+    int num_workers = workers_ip.size();
+    int server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    if (server_socket == -1){
+        std::cout << "Failed to create socket descriptor. " << strerror(errno) << "\n";
+        return ;}
+
+    int port_server = 50052;
+    struct sockaddr_in client_address;
+    int csize = sizeof(client_address);
+    struct sockaddr_in address;
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = inet_addr(self_ip.c_str());
+    address.sin_port = htons(port_server);
+
+    if (bind(server_socket, (struct sockaddr *)&address, sizeof(address)) < 0){
+        std::cout << "Failed to bind socket! " << strerror(errno) << "\n";
+        return ;}
+    
+    if (listen(server_socket, num_workers) < 0) { 
+        std::cout << "Failed to listen on socket! " << strerror(errno) << "\n";
+        exit(EXIT_FAILURE);
+    }
+    while(1) {
+        int client = accept(server_socket, (struct sockaddr*) &client_address, (socklen_t*) &csize);
+        struct linger so_linger;
+	so_linger.l_onoff = 1;
+	so_linger.l_linger = 30;
+	/*int z = setsockopt(client,
+               SOL_SOCKET,
+               SO_LINGER,
+               &so_linger,
+               sizeof so_linger);
+	if ( z ) perror("setsockopt(2)");*/
+
+        uint32_t ntw_offset, ntw_size, ntw_msg_size;
+        int offset, size, msg_size;
+
+        int received_size = recv(client, &ntw_offset, sizeof(uint32_t), 0);
+        offset = ntohl(ntw_offset);
+
+        received_size = recv(client, &ntw_size, sizeof(uint32_t), 0);
+        size = ntohl(ntw_size);
+
+        received_size = recv(client, &ntw_msg_size, sizeof(uint32_t), 0);
+        msg_size = ntohl(ntw_msg_size);
+
+        char buff[msg_size];
+        received_size = recv(client, buff, msg_size, 0);
+	
+        char buf[size];
+	std::string file = std::string(buff);
+        file = file.substr(0, received_size);
+        auto* fi = metadata_container->get_metadata(file);
+        //std::cout << "buff is: " << std::string(buff) << std::endl << std::flush;
+        //std::cout << "fi_name is: " << fi->get_name() << " -------------- " << fi->get_file_descriptor(fi->get_storage_level()) << "   size is: " << size << "     offset is: " << offset  << std::endl << std::flush;
+	
+        //received_size = base_read(fi, buf, offset, size, false);
+        //Status<ssize_t> read_status = read_from_storage(true, fi, buf, offset, size, fi->get_storage_level(), true);
+        
+        //ssize_t r = pread(fi->get_file_descriptor(fi->get_storage_level()), buf, size, static_cast<off_t>(offset));
+	//fcntl(fi->get_file_descriptor(fi->get_storage_level()), F_GETFD);
+	std::thread sender(&HierarchicalDataPlane::sender, this, client, file, offset, size);
+	sender.detach();
+	
+	}
+}
+
+void HierarchicalDataPlane::sender(int client, std::string file, int offset, int size){
+	auto* fi = metadata_container->get_metadata(file);
+        auto m_pread = (libc_pread_t) dlsym(RTLD_NEXT, "pread");
+	ssize_t r;
+        int fd; char buf[size];
+
+        if(fcntl(fi->get_file_descriptor(fi->get_storage_level()), F_GETFD)==0){
+		fd = fi->get_file_descriptor(fi->get_storage_level());
+	        r = m_pread(fi->get_file_descriptor(fi->get_storage_level()), buf, size, static_cast<off_t>(offset));
+	}else{ 
+
+		auto level = fi->get_storage_level(); 
+		/*std::string path = get_fs_driver(level)->get_full_path(file); 
+		auto m_open_var = (libc_open_variadic_t) dlsym(RTLD_NEXT, "open");
+		fd = m_open_var(path.c_str(), O_RDONLY);
+		r = m_pread(fd, buf, size, static_cast<off_t>(offset));
+                auto m_close = (libc_close_t) dlsym(RTLD_NEXT, "close");
+                m_close(fd;*/
+		get_fs_driver(level)->open_descriptor(fi, O_RDONLY, false, true);
+		fd = fi->get_file_descriptor(level);
+		r = m_pread(fd, buf, size, static_cast<off_t>(offset));
+		get_fs_driver(level)->close_descriptor(fi, true);
+		
+		
+		/*std::string path = "/tmp/100g_tfrecords/"; 
+		path += file;
+		const char *pathname = path.c_str(); //((std::string) "/scratch1/09111/mbbm/100g_tfrecords/" + fi->get_name()).c_str();
+                //std::cout << pathname << std::endl << std::flush;
+		//(static_cast<FileSystemDriver*>(storage_hierarchical_matrix[matrix_index][fi->get_storage_level()]))->get_full_path(fi->get_name()).c_str();
+		auto m_open_var = (libc_open_variadic_t) dlsym(RTLD_NEXT, "open");
+		auto m_close = (libc_close_t) dlsym(RTLD_NEXT, "close");
+		//m_close(fi->get_file_descriptor(fi->get_storage_level()));
+		fd = m_open_var(pathname, O_RDONLY);
+		std::cout << "fd: " << fd << std::endl << std::flush;
+		if(fcntl(fd)==0){      //if(fd==-1){
+			perror("open /tmp falha");
+			path = "/scratch1/09111/mbbm/100g_tfrecords/";
+	                path += file;
+        	        pathname = path.c_str();
+			fd = m_open_var(pathname, O_RDONLY);
+		}
+		std::cout << pathname << std::endl << std::flush;
+		r = m_pread(fi->get_file_descriptor(fi->get_storage_level()), buf, size, static_cast<off_t>(offset));
+		m_close(fd);*/
+	}
+        //std::cout << "r is: " << r << std::endl << std::flush;
+        //received_size = read_status.return_value;
+        //std::cout << "buff is: " << std::string(buff) << std::endl << std::flush;
+
+
+        ssize_t sent=-1;
+        if(r > 0){
+           //uint32_t network_r=htonl(r);
+           //send(client, &network_r, sizeof(uint32_t), 0);
+           sent = send(client, buf, r, 0);
+        } else std::cout << self_ip << " tried reading " << size << " from " << fi->get_name() <<
+               " no offset " << offset <<  " and read " << r << " characters." << std::endl << std::flush;
+
+	/*uint32_t ntw_tot; int total;
+        recv(client, &ntw_tot, sizeof(uint32_t), 0);
+        total = ntohl(ntw_tot);
+	while(total < size){
+                std::cout << "r = " << r << std::endl << std::flush;
+                total=0;
+                send(client, buf, r, 0);
+        	if(total<size){ received_size = recv(client, &ntw_tot, sizeof(uint32_t), 0); total = ntohl(ntw_tot); }
+        }*/
+
+
+
+        shutdown(client, SHUT_WR);
+        for(;;) {
+           ssize_t res=recv(client, buf, 4000, 0);
+           if(res < 0) {
+               perror("reading");
+               exit(1);
+           }
+           if(!res) break;
+        }
+        //if(size != r) std::cout << "Worker " << self_ip << " sent " << file << " - " << size << " -> " << r << " enviou " << sent << std::endl << std::flush;
+        //else std::cout << self_ip << " sent " << file << " - " << size  << " enviou " << sent << std::endl << std::flush;
+	//std::cout << "Worker " << self_ip << " sent " << file << " - " << size << std::endl << std::flush;
+        close(client);
+}
+
+
+
+
+
 HierarchicalDataPlane::HierarchicalDataPlane(HierarchicalDataPlane* hdp){
+    std::cout << "HP" << std::endl << std::flush;
     neighbours_index = 0;
     placed_samples = 0;
     storage_sync_timeout = hdp->storage_sync_timeout;
@@ -104,39 +386,20 @@ HierarchicalDataPlane::HierarchicalDataPlane(HierarchicalDataPlane* hdp){
     uses_large_seq_reads = hdp->uses_large_seq_reads;
     epoch_size_signal = hdp->epoch_size_signal;
 
-    self_ip = system("python3 $INSTALL_DIR/monarch/pastor/src/data_plane/logic/root/ip_finder.py");
-    
-    workers_ip = std::vector<std::string>();
-    char * val = std::getenv( "WRKS_ADDRS" );
-    char * p = strtok(val, ","); 
-    while (p != NULL) {
-        workers_ip.push_back(std::string(p));
-        p = strtok(NULL, ",");
-    }
-
-    /*char buffer[128];
-    FILE* pipe = popen("python3 ~/mbbm/TensorflowScripts/scripts/ip_finder.py", "r");
-    while (fgets(buffer, sizeof buffer, pipe) != NULL) {
-        self_ip += buffer;
-    }
-    pclose(pipe);*/
-    if(dht){
-        /*dht_node.run(4222);
-        // check if self is first node 
-        if(self_ip != workers_ip[0])
-            dht_node.bootstrap(workers_ip[0] + ":4222");*/
-        std::cout << "Está a correr com a dht..." << std::endl;
-    }
-    RunServer(this);
+    workers_ip = hdp->workers_ip;
+    self_ip = hdp->self_ip;
+    worker_files_map = hdp->worker_files_map;
 }
 
 HierarchicalDataPlane::~HierarchicalDataPlane(){
+    /*for(std::map<std::string, std::vector<std::string>>::const_iterator it = worker_files_map.begin(); it != worker_files_map.end(); ++it){
+        std::cout << it->first << " : ";
+        for (auto i: it->second)
+	    std::cout << i << ' ';
+        std::cout << "\n" <<std::flush;
+    }*/
+
     delete profiling_service;
-    if(dht){
-        /*dht_node.shutdown();
-        dht_node.join();*/
-        std::cout << "Terminou a dht..." << std::endl;
-    }
 }
 
 absl::string_view HierarchicalDataPlane::decode_filename(absl::string_view full_path){
@@ -193,6 +456,7 @@ int HierarchicalDataPlane::open(const char *pathname, int flags, mode_t mode, bo
         if(profiler && has_opened){
             profiler->submit_client_metadata_request("open", storage_level);
         }
+
         return fildes;
     }
 }
@@ -243,14 +507,19 @@ int HierarchicalDataPlane::open(const char *pathname, int flags, bool _64_option
 
         if(profiler && has_opened){
             profiler->submit_client_metadata_request("open", storage_level);
-        }
+	}
+
         return fildes;
     }
 }
 
 int HierarchicalDataPlane::close(int fildes){
     //close to a file not in source dir
-    auto* fi = metadata_container->remove_fildes(fildes);
+    FileInfo* fi = nullptr;
+    if (is_training){
+        fi = metadata_container->remove_fildes(fildes);
+        //std::cout << "oioio" << std::endl;
+    }
     if(!fi){
         int res = get_fs_driver(storage_hierarchy_size - 1)->passthrough_lib_close(fildes);
         if(debug_logger->is_activated())
@@ -279,6 +548,19 @@ int HierarchicalDataPlane::close(int fildes){
             profiler->submit_client_metadata_request("close", fi->get_storage_level());
         }
     }
+
+    {
+    //std::unique_lock<std::mutex> lock_map(erase_mutex);
+    boost::unique_lock<boost::shared_mutex> lock_map(erase_mutex);
+    //{
+    //if(erase_mutex_map.find(fi->get_name()) != erase_mutex_map.end()) std::unique_lock<std::mutex> lock_file( *(erase_mutex_map[fi->get_name()]) );
+    if((files_caching.find(fi->get_name()) != files_caching.end())) {
+	delete[] files_caching[fi->get_name()].second;
+        int x = files_caching.erase(fi->get_name());
+    } 
+    //}
+    }
+
     return 0;
 }
 
@@ -303,21 +585,22 @@ ssize_t HierarchicalDataPlane::pread(int fildes, char *result, size_t nbyte, uin
         if(debug_logger->is_activated()){
             if(_64_option){
                 debug_write("Stray pread64(" + std::to_string(fildes) + ", ..., " + std::to_string(nbyte) + ", "
-                + std::to_string(offset) + ")" + ". PID= " + std::to_string(getpid()));
+                + std::to_string(offset) + ")" + "From Lustre . PID= " + std::to_string(getpid()));
             } else{
                 debug_write("Stray pread(" + std::to_string(fildes) + ", ..., " + std::to_string(nbyte) + ", "
-                + std::to_string(offset) + ")" + ". PID= " + std::to_string(getpid()));
+                + std::to_string(offset) + ")" + "From Lustre . PID= " + std::to_string(getpid()));
             }
         }
         return get_fs_driver(storage_hierarchy_size - 1)->passthrough_lib_pread(fildes, result, nbyte, offset, _64_option);
     }
     if(debug_logger->is_activated()){
+        int storage_level = fi->get_storage_level();
         if(_64_option){
             debug_write("pread64(" + std::to_string(fildes) + ", ..., " + std::to_string(nbyte) + ", "
-            + std::to_string(offset) + ")" + ". PID= " + std::to_string(getpid()));
+            + std::to_string(offset) + ")" + " From: " + std::to_string(storage_level) + " . PID= " + std::to_string(getpid()));
         }else{
             debug_write("pread(" + std::to_string(fildes) + ", ..., " + std::to_string(nbyte) + ", "
-            + std::to_string(offset) + ")" + ". PID= " + std::to_string(getpid()));
+            + std::to_string(offset) + ")" + " From: " + std::to_string(storage_level) + " . PID= " + std::to_string(getpid()));
         }
     }
     return read(fi, result, offset, nbyte, _64_option);
@@ -340,58 +623,109 @@ ssize_t HierarchicalDataPlane::read(FileInfo* fi, char* result, uint64_t offset,
     return bytes_size;
 }
 
-ssize_t HierarchicalDataPlane::base_read_origin(const std::string& filename, char* result, uint64_t offset, size_t n){
-    FileInfo* fi = metadata_container->get_metadata(filename);
 
-    if(offset >= fi->_get_size()) {
-        if(debug_logger->is_activated())
-            debug_write("Tried to read from offset: " + std::to_string(offset) + " which goes beyond file size: " +
-                std::to_string(fi->_get_size()) + " name: " + fi->get_name());
-        return 0;
-    }
 
-    //it's crucial that we always use this storage_level "snapshot" since it can be changes in parallel
-    int storage_level = fi->get_storage_level();
-    size_t requested_size = n + offset > fi->_get_size() ? fi->_get_size() - offset : n;
+ssize_t HierarchicalDataPlane::send_exchange_request(std::string worker, FileInfo* fi, char* result, uint64_t offset, size_t requested_size){
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    if (client < 0){
+        std::cout << "Error creating socket - send_exchange_request\n\n" << std::endl;
+        //exit(1);
+        return -1;
+    }else{
+    int port_server = 50052;
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(worker.c_str());
+    server_addr.sin_port = htons(port_server);
 
-    if(debug_logger->is_activated()){
-        debug_write("client reading from level " +
-                    std::to_string(storage_level) + 
-                    " file " + fi->get_name() + 
-                    " with offset: " +
-                    std::to_string(offset) + " and size: " + std::to_string(requested_size));
+    if (connect(client, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0) {
+        int path_size = fi->get_name().size();
+        uint32_t network_path_size=htonl(fi->get_name().size());
+        uint32_t network_size=htonl(requested_size);
+        uint32_t network_offset=htonl(offset);
+        send(client, &network_offset, sizeof(uint32_t), 0);
+        send(client, &network_size, sizeof(uint32_t), 0);
+        send(client, &network_path_size, sizeof(uint32_t), 0);
+        send(client, fi->get_name().c_str(), path_size, 0);
 
-        std::cout << "read " << fi->get_name() << " from "  << std::to_string(storage_level) << " for another worker." << std::endl;
-    }
+        //uint32_t network_bs;
+        //recv(client, &network_bs, sizeof(uint32_t), 0);
+        //int bs = ntohl(network_bs);
 
-    //Open check phase
-    if(!transparent_api && fi->has_shareable_file_descriptors() && is_file_system(storage_level)){
-        check_open_phase(fi, storage_level);
-    }
-    Status<ssize_t> read_status = read_from_storage(true, fi, result, offset, requested_size, storage_level, false);
-    //Started reading must be called after read so that the first read opens de file if fs driver.
-    if(read_status.state == SUCCESS) {
-        if(control_handler->check_placement_validity(dynamic_cast<PlacedFileInfo*>(fi))){
-            auto* f = new File(fi, offset, requested_size);
-            if(f->is_full_read()){
-                memcpy(f->get_content(), result, requested_size);
-            }
-            get_fs_driver(storage_level)->open_descriptor(fi, O_RDWR, false, false);
-            control_handler->place(f);
+        int total = 0;
+        int count;
+        while (total < requested_size && (count = recv(client, result+total, requested_size-total, MSG_WAITALL)) > 0){
+                total += count;
+                //std::cout << total << ", " << std::flush;
         }
-    }
-    //TODO this mechanism needs to be added with prefetch + relaxed read
-    //Close check phase. Transparent uses the close method for this.
-    if(!transparent_api && fi->has_shareable_file_descriptors() && is_file_system(storage_level)){
-        check_close_phase(fi, requested_size, offset, storage_level);
-    }
-    return read_status.return_value;
+        close(client);
+        if(total == requested_size) {
+	    debug_write("[HierarchicalDataPlane] " + self_ip + " reading from " + worker + " file " + fi->get_name() +
+                " with offset:" + std::to_string(offset) + " and size:" + std::to_string(requested_size));
+	    return requested_size;
+	}
+        else return -2;
+    }}   
+    return -1;
 }
+
+
+
+void HierarchicalDataPlane::mem_prefetcher(std::string worker, char* result, FileInfo* fi, ssize_t requested_size){
+    char* file = new char[125072862];
+    memcpy(file, result, requested_size);
+    bool b = false;
+    
+    {
+    //std::unique_lock<std::mutex> lock(erase_mutex);
+    boost::unique_lock<boost::shared_mutex> lock(erase_mutex);
+    if (files_caching.find(fi->get_name()) == files_caching.end()){
+        while(!b) b = (files_caching.emplace(fi->get_name(), std::pair<int, char*> (requested_size, file) ) ).second;
+        //b = !(erase_mutex_map.find(fi->get_name()) == erase_mutex_map.end());
+        //while(!b) b = (erase_mutex_map.emplace(fi->get_name(),new std::mutex)).second;
+    }
+    }
+
+    int offset = requested_size; int i=0;
+    requested_size = requested_size + offset > fi->_get_size() ? fi->_get_size() - offset : requested_size;
+    while(requested_size>0){
+        char buf[requested_size];
+        ssize_t r = -3;
+
+        while(r!=requested_size) {
+		r = send_exchange_request(worker,fi,buf,offset,requested_size); 
+		if(r==-1) {
+		    /* {
+	 	    std::unique_lock<std::mutex> lock(map_mutex);
+		    worker_files_map.erase(fi->get_name());
+		    } */
+		    return;
+		}
+	}
+        {
+	//std::unique_lock<std::mutex> lock( *(erase_mutex_map[fi->get_name()]) );
+        //std::shared_lock<std::mutex> lock(erase_mutex);
+        boost::shared_lock<boost::shared_mutex> lock(erase_mutex);
+        b = files_caching.find(fi->get_name()) == files_caching.end();
+        if(!b){
+            memcpy(files_caching[fi->get_name()].second + offset, buf, requested_size);
+            //files_caching[fi->get_name()].first += requested_size;
+            i = files_caching[fi->get_name()].first.load() + requested_size;
+            files_caching[fi->get_name()].first.exchange( i );
+	}}
+        
+        if(b) break;
+	offset += requested_size;
+        requested_size = requested_size + offset > fi->_get_size() ? fi->_get_size() - offset : requested_size;
+    }
+}
+
 
 
 //TODO needs to call a new read from fs to deal with !has_shared_file_descriptor that accepts the fd.
 //TODO break this function in two (transparent and non-transparent)
 ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option){
+    //std::cout << "--------------------------" << fi->get_name() << ":" << n << "-------------------------------------- offset: " << offset <<std::endl << std::flush;
     if(offset >= fi->_get_size()) {
         if(debug_logger->is_activated())
             debug_write("Tried to read from offset: " + std::to_string(offset) + " which goes beyond file size: " +
@@ -401,11 +735,10 @@ ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t of
 
     //it's crucial that we always use this storage_level "snapshot" since it can be changes in parallel
     int storage_level = fi->get_storage_level();
-
     if(storage_level == storage_hierarchical_matrix[matrix_index].size()-1){
-        if(dht){
+        /*if(dht){
             const char* entry;
-            /*
+            
             auto info_key = dht::InfoHash::get(fi->get_name());
             auto vals = dht_node.get(info_key).get();
             if(!vals.empty()){
@@ -420,9 +753,9 @@ ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t of
             else{
                 std::cout << "------------------------------- nao entrou : " << fi->get_name() <<std::endl;
             }
-            */
+            
         }
-        else{
+        else if(grpc){
             for(auto worker_saved_data : worker_files_map){
                 if(std::find(worker_saved_data.second.begin(), worker_saved_data.second.end(),fi->get_name())!=worker_saved_data.second.end()){
                     Client client(worker_saved_data.first);
@@ -431,8 +764,44 @@ ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t of
                     break;
                 }
             }
-        }
+        }else{*/
+            bool found = false;
+            {
+            //if(erase_mutex_map.find(fi->get_name()) != erase_mutex_map.end()) std::unique_lock<std::mutex> lock( *(erase_mutex_map[fi->get_name()]) );
+            //std::shared_lock<std::mutex> lock(erase_mutex);
+            boost::shared_lock<boost::shared_mutex> lock(erase_mutex);
+            
+            found=files_caching.find(fi->get_name()) != files_caching.end()  &&  files_caching[fi->get_name()].first > offset;
+	    if(found){
+		//std::cout << "já tinha " << fi->get_name() << " - " << offset << std::endl << std::flush;
+                ssize_t requested_size = n + offset > fi->_get_size() ? fi->_get_size() - offset : n;
+                memcpy(result, files_caching[fi->get_name()].second + offset, requested_size);
+		return requested_size;
+            }
+	    }
+
+            if(!found) 
+	    for(auto worker : workers_ip){
+		if(worker != self_ip){
+		    if(!worker_files_map[worker].empty() &&
+		       std::find(worker_files_map[worker].begin(), worker_files_map[worker].end(), fi->get_name()) != worker_files_map[worker].end()){
+			size_t requested_size = n + offset > fi->_get_size() ? fi->_get_size() - offset : n;
+
+			ssize_t r = -3; 
+                        int count=0;
+			while(!(r>0) && count<1) {r = send_exchange_request(worker,fi,result,offset,requested_size); count++;}
+
+			if( offset == 0 && r == requested_size) {
+                            std::thread mem_prefetcher(&HierarchicalDataPlane::mem_prefetcher, this, worker, result, fi, requested_size);
+                            mem_prefetcher.detach();
+                        }
+
+                        if(r>0) return r;
+		    }
+		}
+	    }
     }
+
 
     size_t requested_size = n + offset > fi->_get_size() ? fi->_get_size() - offset : n;
 
@@ -456,6 +825,7 @@ ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t of
                 memcpy(f->get_content(), result, requested_size);
             }
             get_fs_driver(storage_level)->open_descriptor(fi, O_RDWR, false, false);
+            //std::cout << "ssize_t HierarchicalDataPlane::base_read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option) - control_handler->place(f);" << std::endl << std::flush;
             control_handler->place(f);
         }
     }
@@ -996,6 +1366,8 @@ void HierarchicalDataPlane::metadata_init(){
         if(debug_logger->is_activated())
             debug_write("First storage level becomes full: " + b_f );
     }
+
+    is_training = true;
 }
 
 void HierarchicalDataPlane::start(){

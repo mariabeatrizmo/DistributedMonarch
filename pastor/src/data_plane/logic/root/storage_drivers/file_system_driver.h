@@ -24,7 +24,7 @@ private:
     ssize_t read(int fd, char* result, uint64_t offset, size_t n, bool _64_option);
     ssize_t read_block(int fd, char* result, size_t n, uint64_t off, bool _64_option);
     ssize_t write_block(int fd, char* buf, size_t n, uint64_t off);
-    std::basic_string<char> get_full_path(const std::string& filename);
+    //std::basic_string<char> get_full_path(const std::string& filename);
     void create_dir(const std::string& path);
     void update_descriptor(std::tuple<int, int, bool>& di, bool client_open);
     void dlopen_library_handle();
@@ -49,6 +49,7 @@ public:
     int passthrough_lib_open(const char *pathname, int flags, bool _64_option);
     ssize_t passthrough_lib_pread(int fildes, char *result, size_t nbyte, uint64_t offset, bool _64_option);
     void *passthrough_lib_mmap (void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+    std::basic_string<char> get_full_path(const std::string& filename);
 };
 
 #endif //THESIS_FILE_SYSTEM_DRIVER_H
