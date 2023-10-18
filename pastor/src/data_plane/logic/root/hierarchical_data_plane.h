@@ -87,6 +87,7 @@ private:
     explicit HierarchicalDataPlane(int instance_id, int world_size, int number_of_workers, int hierarchy_size);
     int get_storage_hierarchical_matrix_index(int rank, int worker_id);
     Status<ssize_t> base_read_from_storage(FileInfo* fi, char* result, uint64_t offset, size_t n, int level, bool _64_option);
+    Status<ssize_t> base_read_from_storage_aux(FileInfo* fi, char* result, uint64_t offset, size_t n, int level, bool _64_option);
     ssize_t base_read(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option);
     void *mmap(void *addr, size_t length, int prot, int flags, FileInfo* fi, off_t offset);
     Status<void*> base_mmap_from_storage(void *addr, size_t length, int prot, int flags, FileInfo* fi, off_t offset, int level);
@@ -160,6 +161,7 @@ public:
 
     Status<ssize_t> read_from_storage(bool client_req, File* f, int level);
     Status<ssize_t> read_from_storage(bool client_req, FileInfo* fi, char* result, uint64_t offset, size_t n, int level, bool _64_option);
+    Status<ssize_t> read_from_storage_aux(bool client_req, FileInfo* fi, char* result, uint64_t offset, size_t n, int level, bool _64_option);
 
     Status<ssize_t> remove(FileInfo* fi, int level);
 
@@ -174,6 +176,7 @@ public:
 
 
     virtual void debug_write(const std::string& msg);
+    ssize_t base_read_aux(FileInfo* fi, char* result, uint64_t offset, size_t n, bool _64_option);
     void exchager();
     void updater();
     //void teste();

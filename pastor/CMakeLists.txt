@@ -20,7 +20,7 @@ endif (APPLE)
 
 if (UNIX AND NOT APPLE)
     message(STATUS "Detecting UNIX (!Apple)")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wl,--no-as-needed -ldl -lboost_system -lboost_thread")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wl,--no-as-needed -ldl -lboost_system -lboost_thread -fpermissive")
 endif ()
 
 if (HAVE_CLANG_THREAD_SAFETY)
